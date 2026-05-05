@@ -4,6 +4,18 @@ A Windows desktop tool that automatically downloads your **30-minute interval el
 
 ---
 
+## Changelog
+
+### v1.1 — May 2026
+
+- **Bug fix: hardcoded Meter ID removed** — the app previously fell back to a hardcoded `sdpudcid` value when the cookie didn't contain one, causing syncs to silently fetch another account's data. The app now **requires** a valid Meter ID and shows a clear guide if it can't be auto-detected.
+- **Improved Meter ID detection** — `_extract_sdpudcid` now scans all cookies (not just `e3LoginReturn`), handles single and double URL-encoding, and uses a regex to reliably find the 20-digit meter number anywhere in a cookie value.
+- **Session expiry detection** — after 5 consecutive redirected days, sync now fails fast with a clear "cookie expired" error instead of silently returning empty data.
+- **Improved session validation** — a cookie that redirects to the login page (same domain, `/login` path) is now correctly rejected as invalid.
+- **Better redirect logging** — HTTP status code is now included in redirect debug messages.
+
+---
+
 ## What it Does
 
 ### TNB Smart Sync (the app)
@@ -126,9 +138,23 @@ All settings are saved to `settings.json` (auto-created next to the exe). This f
 | `username` | Your myTNB portal email |
 | `password` | Your myTNB portal password |
 | `cookie_string` | Session cookie (optional fallback if password login fails) |
-| `sdpudcid` | Your smart meter ID (auto-detected from cookie, or enter manually) |
+| `sdpudcid` | Your smart meter ID — auto-detected from cookie. If blank, find it manually (see below) |
 | `bootstrap_start_date` | Date to fetch history from on first run (YYYY-MM-DD) |
 | `excel_path` | Full path to the output Excel file |
+
+---
+
+## Finding Your Meter ID (sdpudcid)
+
+The Meter ID is a 20-digit number that identifies your smart meter. The app detects it automatically from your session cookie. If it cannot be found:
+
+1. Open Chrome and log into the myTNB Smart Living portal
+2. Navigate to the **Usage** page: `https://smartliving.myaccount.mytnb.com.my/commodity/electric/usage`
+3. Press **F12** → **Network** tab
+4. Look for a request named **`timeseries`** in the list
+5. Click it → **Headers** tab → scroll to **Request URL**
+6. Find `sdpudcid=` in the URL — copy the number after it
+7. Paste it into the **Meter ID** field in the app Settings tab
 
 ---
 

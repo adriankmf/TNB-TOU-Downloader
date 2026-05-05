@@ -210,7 +210,8 @@ def _load_cookie_string(session: cloudscraper.CloudScraper, cookie_str: str) -> 
 # -- Session validation ---------------------------------------------------------
 
 def _session_is_valid(session: cloudscraper.CloudScraper) -> bool:
-    """Return True if a request to the protected page stays on the smartliving domain."""
+    """Return True if a request to the protected page stays on the smartliving domain
+    and does NOT land on the login page (which is also on the same domain)."""
     protected_url = config.TNB_API_BASE_URL.rstrip("/") + USAGE_PAGE_PATH
     try:
         resp = session.get(
@@ -218,7 +219,16 @@ def _session_is_valid(session: cloudscraper.CloudScraper) -> bool:
             timeout=config.REQUEST_TIMEOUT,
             allow_redirects=True,
         )
-        return _on_smartliving(resp.url)
+        final_url = resp.url.lower()
+        # Must be on smartliving domain
+        if not _on_smartliving(resp.url):
+            logger.debug("Session validation: redirected off smartliving domain → %s", resp.url)
+            return False
+        # Must NOT have landed on the login page (same domain, different path)
+        if "/login" in final_url:
+            logger.debug("Session validation: redirected to login page → %s", resp.url)
+            return False
+        return True
     except Exception as exc:
         logger.debug("Session validation failed: %s", exc)
         return False

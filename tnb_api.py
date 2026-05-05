@@ -89,9 +89,30 @@ def get_usage_dataframe(start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
         end_dt.strftime("%Y-%m-%d"),
     )
 
+    redirect_count = 0
+    checked_days   = 0
+
     while current_day <= end_day:
         next_day = current_day + timedelta(days=1)
-        day_df   = _fetch_day(current_day, next_day)
+        day_df, was_redirect = _fetch_day(current_day, next_day)
+        checked_days += 1
+
+        if was_redirect:
+            redirect_count += 1
+            # Fast-fail after 5 consecutive redirects — almost certainly a dead session.
+            if redirect_count >= 5:
+                raise ValueError(
+                    "Session cookie has expired.\n\n"
+                    "The portal is redirecting every request to the login page.\n\n"
+                    "Please refresh your cookie:\n"
+                    "  1. Open Chrome → https://smartliving.myaccount.mytnb.com.my\n"
+                    "  2. Log in and navigate to the Usage page\n"
+                    "  3. Press F12 → Network → click any request → Headers\n"
+                    "  4. Copy the full 'Cookie:' value\n"
+                    "  5. Paste it into the Settings tab and click Save Settings"
+                )
+        else:
+            redirect_count = 0  # reset streak on a successful response
 
         if not day_df.empty:
             mask = (day_df[COL_TIMESTAMP] >= start_dt) & (day_df[COL_TIMESTAMP] <= end_dt)
@@ -137,10 +158,12 @@ def _warm_up_session() -> None:
     )
 
 
-def _fetch_day(day_start: datetime, day_end: datetime) -> pd.DataFrame:
+def _fetch_day(day_start: datetime, day_end: datetime):
     """
     Make one GET /timeseries request for a single calendar day.
-    Retries once if the session appears to have expired.
+    Returns (DataFrame, was_redirect: bool).
+    was_redirect=True means the server issued a 302/soft-redirect (likely expired session).
+    Retries once on soft-redirect.
     """
     url    = _build_url(day_start, day_end)
     _empty = pd.DataFrame(columns=[COL_TIMESTAMP, COL_KWH, COL_RATEPLAN])
@@ -167,24 +190,23 @@ def _fetch_day(day_start: datetime, day_end: datetime) -> pd.DataFrame:
         )
 
         # ── 302 / 3xx redirect ──────────────────────────────────────────────
-        # The API sometimes issues a 302 that strips all query params, redirecting
-        # back to the bare endpoint URL.  Following it causes a 500 because the
-        # controller can't find 'view' in $_GET.  Instead, treat any redirect from
-        # this endpoint as "no data available for this date" and skip the day.
+        # The API can issue a 302 that strips all query params (bare endpoint URL →
+        # 500 "view not found") or redirects to /login (session expired).
+        # Signal the caller with was_redirect=True so it can detect pattern of
+        # repeated redirects that indicate a dead session.
         if response.is_redirect or response.status_code in (301, 302, 303, 307, 308):
             loc = response.headers.get("Location", "")
             logger.debug(
-                "302 redirect for %s -> %s — treating as no data for this day.",
-                day_start.strftime("%Y-%m-%d"), loc,
+                "HTTP %s redirect for %s → %s",
+                response.status_code, day_start.strftime("%Y-%m-%d"), loc,
             )
-            return _empty
+            return _empty, True
 
         _raise_for_status_with_detail(response)
 
         # ── Soft redirect ───────────────────────────────────────────────────
         # API returns {"redirect": true, "redirectTo": "/login"} as 200 JSON.
-        # This means the session check inside the controller failed.
-        # Retry once after revisiting the usage page; if it still happens, skip.
+        # Retry once after revisiting the usage page.
         try:
             body_check = response.json()
             if body_check.get("redirect"):
@@ -201,7 +223,7 @@ def _fetch_day(day_start: datetime, day_end: datetime) -> pd.DataFrame:
                         "Soft-redirect persists for %s after warm-up — skipping day.",
                         day_start.strftime("%Y-%m-%d"),
                     )
-                    return _empty
+                    return _empty, True
         except Exception:
             pass  # Not JSON — fall through to normal parsing
 
@@ -223,7 +245,7 @@ def _fetch_day(day_start: datetime, day_end: datetime) -> pd.DataFrame:
         raise
 
     _check_api_errors(body, url)
-    return _flatten_response(body, day_start)
+    return _flatten_response(body, day_start), False
 
 
 def _build_url(day_start: datetime, day_end: datetime) -> str:

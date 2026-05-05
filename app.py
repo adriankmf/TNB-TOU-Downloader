@@ -72,7 +72,7 @@ import tnb_auth        # noqa: E402
 
 _DEFAULTS: dict = {
     "cookie_string":        "",
-    "sdpudcid":             "40000000000013274078",   # known meter ID; overridden by cookie detection
+    "sdpudcid":             "",          # auto-detected from cookie; never hardcoded
     "api_base_url":         "https://smartliving.myaccount.mytnb.com.my",
     "excel_path":           str(APP_DIR / "tnb_usage.xlsx"),
     "bootstrap_start_date": "2024-01-01",
@@ -299,8 +299,12 @@ class TNBApp(tk.Tk):
         self._sdpudcid_var = tk.StringVar()
         tk.Entry(grid, textvariable=self._sdpudcid_var, width=28, font=FONT_MONO).grid(
             row=0, column=1, sticky="w", pady=6)
-        tk.Label(grid, text="Auto-detected from cookie",
-                 font=("Segoe UI", 8), fg="#888").grid(row=0, column=2, sticky="w", padx=8)
+        meter_hint = tk.Frame(grid)
+        meter_hint.grid(row=0, column=2, sticky="w", padx=8)
+        tk.Label(meter_hint,
+                 text="Auto-detected from cookie  |  If blank: in Chrome, go to the usage page,\n"
+                      "F12 → Network → click 'timeseries' → look for sdpudcid= in the Request URL",
+                 font=("Segoe UI", 8), fg="#888", justify=tk.LEFT).pack(anchor="w")
 
         lbl("History Start Date:", 1)
         self._start_date_var = tk.StringVar()
@@ -463,8 +467,17 @@ class TNBApp(tk.Tk):
             if sdpudcid:
                 self._sdpudcid_var.set(sdpudcid)
         if not sdpudcid:
-            sdpudcid = _DEFAULTS["sdpudcid"]
-            self._sdpudcid_var.set(sdpudcid)
+            messagebox.showwarning(
+                "Meter ID Required",
+                "Could not auto-detect your Meter ID (sdpudcid) from the cookie.\n\n"
+                "To find it manually:\n"
+                "  1. Open Chrome → TNB Smart Living usage page\n"
+                "  2. Press F12 → Network tab\n"
+                "  3. Click any 'timeseries' request\n"
+                "  4. Look in the Request URL for  sdpudcid=XXXXXXXXXX\n"
+                "  5. Copy that number into the Meter ID field above."
+            )
+            return False
 
         start_date = self._start_date_var.get().strip()
         if start_date:
@@ -562,8 +575,18 @@ class TNBApp(tk.Tk):
             if sdpudcid:
                 self._sdpudcid_var.set(sdpudcid)
         if not sdpudcid:
-            sdpudcid = _DEFAULTS["sdpudcid"]
-            self._sdpudcid_var.set(sdpudcid)
+            messagebox.showwarning(
+                "Meter ID Required",
+                "Meter ID (sdpudcid) is not set — cannot sync without it.\n\n"
+                "To find your Meter ID:\n"
+                "  1. Open Chrome → TNB Smart Living usage page\n"
+                "  2. Press F12 → Network tab\n"
+                "  3. Click any 'timeseries' request\n"
+                "  4. Look in the Request URL for  sdpudcid=XXXXXXXXXX\n"
+                "  5. Copy that number into the Meter ID field in the Settings tab."
+            )
+            self.notebook.select(0)
+            return
 
         # Auto-save current UI state before syncing
         self.settings.update({
@@ -714,18 +737,47 @@ class TNBApp(tk.Tk):
 # ---------------------------------------------------------------------------
 
 def _extract_sdpudcid(cookie_str: str) -> str:
-    """Try to pull the sdpudcid from the e3LoginReturn cookie (double-URL-encoded)."""
-    import urllib.parse
+    """
+    Try to pull sdpudcid from any cookie value that contains it.
+    Tries multiple cookies (e3LoginReturn, dtSac*, etc.) and handles
+    single and double URL-encoding.
+    """
+    import urllib.parse, re
+
+    def _scan(text: str) -> str:
+        """Return sdpudcid value if found anywhere in text."""
+        # Direct match
+        m = re.search(r'sdpudcid=([0-9]{10,})', text)
+        if m:
+            return m.group(1)
+        return ""
+
     for part in cookie_str.split(";"):
         part = part.strip()
-        if part.lower().startswith("e3loginreturn="):
-            try:
-                val = urllib.parse.unquote(part.split("=", 1)[1])
-                val = urllib.parse.unquote(val)   # double-encoded
-                if "sdpudcid=" in val:
-                    return val.split("sdpudcid=")[1].split("&")[0]
-            except Exception:
-                pass
+        if "=" not in part:
+            continue
+        name, _, raw_val = part.partition("=")
+        name = name.strip().lower()
+
+        # Try the raw value first
+        hit = _scan(raw_val)
+        if hit:
+            return hit
+
+        # One level of URL-decoding
+        try:
+            decoded1 = urllib.parse.unquote(raw_val)
+            hit = _scan(decoded1)
+            if hit:
+                return hit
+            # Two levels (some cookies are double-encoded)
+            decoded2 = urllib.parse.unquote(decoded1)
+            hit = _scan(decoded2)
+            if hit:
+                return hit
+        except Exception:
+            pass
+
     return ""
 
 

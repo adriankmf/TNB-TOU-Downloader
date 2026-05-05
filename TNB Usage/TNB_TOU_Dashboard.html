@@ -306,6 +306,30 @@ tr.is-peak{background:var(--peak-row)}
 .prof-warn{background:rgba(255,152,0,.12);border:1px solid rgba(255,152,0,.35);
   border-radius:7px;padding:8px 13px;font-size:11.5px;margin-bottom:10px;color:var(--warning);line-height:1.5}
 
+/* ═══ CALENDAR PICKER ══════════════════════════════════════════ */
+.calpick-btn{display:inline-flex;align-items:center;gap:5px;background:var(--card2);
+  border:1px solid var(--border);border-radius:6px;padding:4px 9px;cursor:pointer;
+  font-size:12px;transition:border-color .2s;white-space:nowrap;user-select:none;color:var(--text)}
+.calpick-btn:hover,.calpick-btn.open{border-color:var(--primary);color:var(--primary)}
+#cp-panel{position:fixed;z-index:9999;background:var(--card);border:1px solid var(--border);
+  border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.3);padding:12px;width:228px;display:none}
+.calpick-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.calpick-nav>span{font-size:13px;font-weight:600;color:var(--text)}
+.calpick-nav>button{background:none;border:1px solid var(--border);border-radius:5px;
+  width:26px;height:26px;cursor:pointer;font-size:18px;color:var(--muted);line-height:1;
+  display:flex;align-items:center;justify-content:center;transition:all .15s}
+.calpick-nav>button:hover{background:var(--primary);color:#fff;border-color:var(--primary)}
+.calpick-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px}
+.cg-dow{font-size:9px;font-weight:700;text-align:center;color:var(--muted);padding:4px 0}
+.cg-day{font-size:11.5px;text-align:center;padding:5px 2px;border-radius:4px;cursor:pointer;
+  color:var(--text);transition:background .1s}
+.cg-day:hover{background:var(--primary-lt);color:var(--primary)}
+.cg-day.sel{background:var(--primary)!important;color:#fff!important;font-weight:700}
+.cg-day.tod{font-weight:700;color:var(--primary)}
+.cg-clear{font-size:10.5px;color:var(--muted);cursor:pointer;text-align:center;
+  margin-top:8px;padding:3px 0;border-top:1px solid var(--border)}
+.cg-clear:hover{color:var(--danger)}
+
 /* ═══ PH PANEL ═══════════════════════════════════════════════════ */
 .ph-note{background:var(--card2);border-radius:7px;padding:9px 13px;
   font-size:11.5px;line-height:1.6;margin-bottom:12px;color:var(--muted)}
@@ -354,10 +378,28 @@ tr.is-peak{background:var(--peak-row)}
 
 <!-- DATE FILTER BAR -->
 <div class="date-bar" id="dateBar">
+  <label>Year</label>
+  <select id="filterYear" onchange="filterByDropdown()" style="background:var(--card2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;color:var(--text);cursor:pointer">
+    <option value="">All Years</option>
+  </select>
+  <label>Month</label>
+  <select id="filterMonth" onchange="filterByDropdown()" style="background:var(--card2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;color:var(--text);cursor:pointer">
+    <option value="">All Months</option>
+    <option value="1">January</option><option value="2">February</option>
+    <option value="3">March</option><option value="4">April</option>
+    <option value="5">May</option><option value="6">June</option>
+    <option value="7">July</option><option value="8">August</option>
+    <option value="9">September</option><option value="10">October</option>
+    <option value="11">November</option><option value="12">December</option>
+  </select>
+  <!-- Hidden date inputs — driven by dropdowns, calendar pickers & quick buttons -->
+  <input type="date" id="filterFrom" style="display:none">
+  <input type="date" id="filterTo"   style="display:none">
   <label>From</label>
-  <input type="date" id="filterFrom" onchange="applyFilter()">
+  <div id="cpbtn-gfrom" class="calpick-btn" onclick="calOpen('gfrom')"><span>📅</span><span class="cpbtn-text">Select...</span></div>
   <label>To</label>
-  <input type="date" id="filterTo" onchange="applyFilter()">
+  <div id="cpbtn-gto" class="calpick-btn" onclick="calOpen('gto')"><span>📅</span><span class="cpbtn-text">Select...</span></div>
+  <div style="width:1px;height:20px;background:var(--border);flex-shrink:0;margin:0 2px"></div>
   <button class="qbtn" onclick="quickFilter(7)">7D</button>
   <button class="qbtn" onclick="quickFilter(30)">30D</button>
   <button class="qbtn" onclick="quickFilter(90)">3M</button>
@@ -501,9 +543,11 @@ tr.is-peak{background:var(--peak-row)}
       </select>
       <div class="prof-sep"></div>
       <label>Date</label>
-      <input type="date" id="profFrom" onchange="profFilterChange()">
+      <input type="date" id="profFrom" style="display:none" onchange="profFilterChange()">
+      <div id="cpbtn-pfrom" class="calpick-btn" onclick="calOpen('pfrom')"><span>📅</span><span class="cpbtn-text">Select...</span></div>
       <span style="color:var(--muted);font-size:12px">–</span>
-      <input type="date" id="profTo" onchange="profFilterChange()">
+      <input type="date" id="profTo" style="display:none" onchange="profFilterChange()">
+      <div id="cpbtn-pto" class="calpick-btn" onclick="calOpen('pto')"><span>📅</span><span class="cpbtn-text">Select...</span></div>
       <div class="prof-sep"></div>
       <label>Time</label>
       <input type="time" id="profTimeFrom" value="00:00" onchange="profFilterChange()">
@@ -668,6 +712,9 @@ tr.is-peak{background:var(--peak-row)}
 </div><!-- /container -->
 </div><!-- /dashboard -->
 
+<!-- Calendar Picker Panel (shared, repositioned per open) -->
+<div id="cp-panel"></div>
+
 <!-- Tooltip -->
 <div id="htip"></div>
 
@@ -789,7 +836,37 @@ function filterRows(){
   fi.textContent=`${_fRows.length.toLocaleString()} records · ${new Set(_fRows.map(r=>r.ts.getFullYear()+'-'+r.ts.getMonth())).size} months`;
 }
 function applyFilter(){filterRows();applyProfFilter();renderActiveTab();}
+
+// ── Dropdown-driven filter (Year / Month selects) ──────────────────────────
+function filterByDropdown(){
+  const yr=document.getElementById('filterYear').value;
+  const mo=document.getElementById('filterMonth').value;
+  // Clear quick-button highlights
+  document.querySelectorAll('.qbtn').forEach(b=>b.classList.remove('active'));
+  if(!yr){
+    // All data
+    document.getElementById('filterFrom').value='';
+    document.getElementById('filterTo').value='';
+  } else if(!mo){
+    // Full year
+    document.getElementById('filterFrom').value=`${yr}-01-01`;
+    document.getElementById('filterTo').value=`${yr}-12-31`;
+  } else {
+    // Specific month
+    const lastDay=new Date(+yr,+mo,0).getDate();
+    const mm=String(mo).padStart(2,'0');
+    document.getElementById('filterFrom').value=`${yr}-${mm}-01`;
+    document.getElementById('filterTo').value=`${yr}-${mm}-${String(lastDay).padStart(2,'0')}`;
+  }
+  calSetVal('gfrom',document.getElementById('filterFrom').value);
+  calSetVal('gto',  document.getElementById('filterTo').value);
+  applyFilter();
+}
+
 function quickFilter(days){
+  // Reset dropdowns so they don't show stale selection
+  document.getElementById('filterYear').value='';
+  document.getElementById('filterMonth').value='';
   const qBtns=document.querySelectorAll('.qbtn');
   qBtns.forEach(b=>b.classList.remove('active'));
   if(days===0){
@@ -802,6 +879,8 @@ function quickFilter(days){
     document.getElementById('filterFrom').value=from.toISOString().slice(0,10);
     document.getElementById('filterTo').value=last.toISOString().slice(0,10);
   }
+  calSetVal('gfrom',document.getElementById('filterFrom').value);
+  calSetVal('gto',  document.getElementById('filterTo').value);
   applyFilter();
 }
 function setGran(g){
@@ -1029,6 +1108,8 @@ function profQuick(type){
     const now=new Date();const lm=new Date(now.getFullYear(),now.getMonth()-1,1);
     yr.value=lm.getFullYear();mo.value=lm.getMonth()+1;fd.value='';td.value='';
   }
+  calSetVal('pfrom',document.getElementById('profFrom').value);
+  calSetVal('pto',  document.getElementById('profTo').value);
   profFilterChange();
 }
 
@@ -1509,15 +1590,18 @@ function handleFile(file){
       document.getElementById('iFile').textContent=file.name;
       document.getElementById('iPeriod').textContent=`${first.toLocaleDateString('en-MY',fmt)} – ${last.toLocaleDateString('en-MY',fmt)}`;
       document.getElementById('iRecords').textContent=_allRows.length.toLocaleString()+' records';
-      // Set filter to full range
+      // Populate year dropdowns from data (global filter + profile filter)
+      const dataYears=[...new Set(_allRows.map(r=>r.ts.getFullYear()))].sort((a,b)=>a-b);
+      const yearOpts=dataYears.map(y=>`<option value="${y}">${y}</option>`).join('');
+      document.getElementById('filterYear').innerHTML='<option value="">All Years</option>'+yearOpts;
+      document.getElementById('profYear').innerHTML='<option value="">All</option>'+yearOpts;
+      // Default to full range
       document.getElementById('filterFrom').value=first.toISOString().slice(0,10);
       document.getElementById('filterTo').value=last.toISOString().slice(0,10);
+      calSetVal('gfrom',first.toISOString().slice(0,10));
+      calSetVal('gto',  last.toISOString().slice(0,10));
       document.getElementById('qAll').classList.add('active');
       filterRows();
-      // Init profile filter with all years available
-      const years=[...new Set(_allRows.map(r=>r.ts.getFullYear()))].sort((a,b)=>a-b);
-      const yrSel=document.getElementById('profYear');
-      yrSel.innerHTML='<option value="">All</option>'+years.map(y=>`<option value="${y}">${y}</option>`).join('');
       applyProfFilter();
       document.getElementById('upload-section').style.display='none';
       document.getElementById('dashboard').style.display='block';
@@ -1560,11 +1644,127 @@ function renderPHPanel(){
 }
 
 // ════════════════════════════════════════════════════════════════
+//  CALENDAR PICKER ENGINE
+// ════════════════════════════════════════════════════════════════
+const _cp={active:null,pickers:{}};
+const _cpMO=['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+function calInit(id,onChange){
+  const now=new Date();
+  _cp.pickers[id]={yr:now.getFullYear(),mo:now.getMonth(),val:'',onChange};
+}
+function calSetVal(id,ds){
+  const p=_cp.pickers[id]; if(!p)return;
+  p.val=ds||'';
+  const btn=document.getElementById('cpbtn-'+id);
+  if(btn){const s=btn.querySelector('.cpbtn-text');if(s)s.textContent=ds?_cpFmt(ds):'Select...';}
+  if(ds){const d=new Date(ds+'T00:00:00');p.yr=d.getFullYear();p.mo=d.getMonth();}
+}
+function calOpen(id){
+  const panel=document.getElementById('cp-panel');
+  if(_cp.active===id){_cpClose();return;}
+  if(_cp.active){const ob=document.getElementById('cpbtn-'+_cp.active);if(ob)ob.classList.remove('open');}
+  _cp.active=id;
+  _cpRender();
+  panel.style.display='block';
+  const btn=document.getElementById('cpbtn-'+id);
+  if(btn){
+    const r=btn.getBoundingClientRect();
+    panel.style.left=Math.min(r.left,window.innerWidth-238)+'px';
+    panel.style.top=(r.bottom+window.scrollY+4)+'px';
+    btn.classList.add('open');
+  }
+}
+function _cpClose(){
+  const panel=document.getElementById('cp-panel');
+  if(panel)panel.style.display='none';
+  if(_cp.active){const b=document.getElementById('cpbtn-'+_cp.active);if(b)b.classList.remove('open');_cp.active=null;}
+}
+function calPrev(){
+  const p=_cp.pickers[_cp.active];if(!p)return;
+  if(--p.mo<0){p.mo=11;p.yr--;}_cpRender();
+}
+function calNext(){
+  const p=_cp.pickers[_cp.active];if(!p)return;
+  if(++p.mo>11){p.mo=0;p.yr++;}_cpRender();
+}
+function calPick(ds){
+  const id=_cp.active;if(!id)return;
+  const p=_cp.pickers[id];p.val=ds;
+  const btn=document.getElementById('cpbtn-'+id);
+  if(btn){const s=btn.querySelector('.cpbtn-text');if(s)s.textContent=_cpFmt(ds);}
+  const cb=p.onChange;_cpClose();if(cb)cb(ds);
+}
+function calClear(){
+  const id=_cp.active;if(!id)return;
+  const p=_cp.pickers[id];p.val='';
+  const btn=document.getElementById('cpbtn-'+id);
+  if(btn){const s=btn.querySelector('.cpbtn-text');if(s)s.textContent='Select...';}
+  const cb=p.onChange;_cpClose();if(cb)cb('');
+}
+function _cpFmt(ds){
+  if(!ds)return'Select...';
+  const d=new Date(ds+'T00:00:00');
+  return d.toLocaleDateString('en-MY',{day:'numeric',month:'short',year:'numeric'});
+}
+function _cpRender(){
+  const id=_cp.active;if(!id)return;
+  const p=_cp.pickers[id];
+  const{yr,mo,val}=p;
+  const panel=document.getElementById('cp-panel');
+  const firstDow=new Date(yr,mo,1).getDay(); // 0=Sun
+  const dim=new Date(yr,mo+1,0).getDate();
+  const today=new Date().toISOString().slice(0,10);
+  let g='<div class="calpick-grid">';
+  ['Su','Mo','Tu','We','Th','Fr','Sa'].forEach(d=>g+=`<div class="cg-dow">${d}</div>`);
+  for(let i=0;i<firstDow;i++) g+='<div></div>';
+  for(let day=1;day<=dim;day++){
+    const ds=`${yr}-${String(mo+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    let cls='cg-day';
+    if(ds===val) cls+=' sel';
+    else if(ds===today) cls+=' tod';
+    g+=`<div class="${cls}" onclick="calPick('${ds}')">${day}</div>`;
+  }
+  g+='</div>';
+  panel.innerHTML=`<div class="calpick-nav">
+    <button onclick="calPrev()">&#8249;</button>
+    <span>${_cpMO[mo]} ${yr}</span>
+    <button onclick="calNext()">&#8250;</button>
+  </div>${g}<div class="cg-clear" onclick="calClear()">✕ Clear date</div>`;
+}
+// Close when clicking outside the panel or any picker button
+document.addEventListener('click',e=>{
+  const panel=document.getElementById('cp-panel');
+  if(!panel||panel.style.display==='none')return;
+  if(panel.contains(e.target))return;
+  if(e.target.closest&&e.target.closest('[id^="cpbtn-"]'))return;
+  _cpClose();
+},{capture:true});
+
+// ════════════════════════════════════════════════════════════════
 //  INIT
 // ════════════════════════════════════════════════════════════════
 Chart.defaults.color='#8892A8';
 Chart.defaults.borderColor='#2A2E42';
 renderPHPanel();
+
+// Register calendar pickers
+calInit('gfrom',v=>{
+  document.getElementById('filterFrom').value=v;
+  document.querySelectorAll('.qbtn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('filterYear').value='';
+  document.getElementById('filterMonth').value='';
+  applyFilter();
+});
+calInit('gto',v=>{
+  document.getElementById('filterTo').value=v;
+  document.querySelectorAll('.qbtn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('filterYear').value='';
+  document.getElementById('filterMonth').value='';
+  applyFilter();
+});
+calInit('pfrom',v=>{document.getElementById('profFrom').value=v;profFilterChange();});
+calInit('pto',  v=>{document.getElementById('profTo').value=v;profFilterChange();});
 
 // File events
 document.getElementById('fileInput').addEventListener('change',e=>handleFile(e.target.files[0]));
