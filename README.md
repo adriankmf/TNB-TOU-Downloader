@@ -1,16 +1,34 @@
 # TNB Smart Sync
 
-Personal desktop app that downloads my 30-minute TOU smart-meter readings from the myTNB
+Windows desktop app that downloads your 30-minute TOU smart-meter readings from the myTNB
 **Smart Living** portal into Excel (one file per account) and shows them on a built-in dashboard.
 
+Version 2.0. See [CHANGELOG.md](CHANGELOG.md) for what changed.
+
+> Personal tool, not affiliated with or endorsed by TNB. It uses your own myTNB login and reads
+> the same data you see on the myTNB website.
+
 - Own login screen (myTNB email + password). The password is saved in **Windows Credential
-  Manager** (entry "TNB Smart Sync"), never in a file.
+  Manager** (entry "TNB Smart Sync") on this PC only, never in a file.
 - Logs in by itself with a **headless** Chrome (Edge as fallback). You never see a browser,
   unless TNB asks for a CAPTCHA/OTP. Then a window opens so you can finish it.
 - Account picker for all accounts on the login (e.g. Home, Farm, Shop). The first account found is selected until you pick another.
 - Incremental sync from the last saved reading. No duplicates, and every day is checked for 48 readings.
 - Dashboard: daily peak/off-peak bars, peak share, average load profile (weekday vs weekend),
   latest full day, monthly totals.
+
+## Set up
+
+Needs Windows 10/11, Python 3.11 or newer (tick "Add python.exe to PATH" when installing), and
+Google Chrome or Microsoft Edge.
+
+```bat
+git clone https://github.com/adriankmf/TNB-TOU-Downloader.git
+cd TNB-TOU-Downloader
+"Start TNB Sync.bat"
+```
+
+The first start installs the packages from `requirements.txt` by itself.
 
 ## Use it
 
@@ -73,7 +91,19 @@ Portal facts (checked live, Oct 2026):
 | `browser_profile\` | the background Chrome's profile (cookies/cache; the login itself comes from the saved password) |
 | `tnb_sync.log` | detailed log ("Open log" in Settings) |
 | `tests\` | offline tests: `python -m pytest -q tests` |
-| `_old\`, `data\` | archived old versions / Excel backups |
+
+`settings.json`, `browser_profile\`, the log and all Excel files are in `.gitignore`, so your
+email, account numbers and readings never end up in git.
+
+## Password and privacy
+
+- The password is kept in Windows Credential Manager (Control Panel → Credential Manager →
+  Windows Credentials → "TNB Smart Sync"), saved as "local machine". It stays on this PC: it does
+  not roam with a Windows domain profile, and if you copy the app folder to another PC, that PC
+  asks for the password once.
+- It is saved only after myTNB accepts the login. **Settings → Sign out** deletes it.
+- Your login and readings go only to myTNB (the dashboard downloads the Chart.js library from
+  cdnjs, nothing more). No account number, meter ID or email is built into the code.
 
 ## Troubleshooting
 
