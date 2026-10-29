@@ -1,9 +1,8 @@
-# TNB_TOU.spec
-# PyInstaller spec file for TNB Smart Sync GUI
-# Run:  pyinstaller TNB_TOU.spec
+# TNB_TOU.spec -- PyInstaller build for TNB Smart Sync (run via "Build EXE.bat")
 
-import sys
 from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 
@@ -11,52 +10,16 @@ a = Analysis(
     ['app.py'],
     pathex=[str(Path('.').resolve())],
     binaries=[],
-    datas=[],
-    hiddenimports=[
-        # cloudscraper internals
-        'cloudscraper',
-        'cloudscraper.interpreters',
-        'cloudscraper.interpreters.js2py',
-        'cloudscraper.interpreters.native',
-        'js2py',
-        'js2py.internals',
-        # requests / urllib
-        'requests',
-        'requests.adapters',
-        'requests.packages',
-        'urllib3',
-        'urllib3.util',
-        'urllib3.util.retry',
-        'certifi',
-        'charset_normalizer',
-        'idna',
-        # pandas / openpyxl
-        'pandas',
-        'openpyxl',
-        'openpyxl.styles',
-        'openpyxl.utils',
-        'openpyxl.workbook',
-        # tkinter (usually auto-detected but be explicit)
-        'tkinter',
-        'tkinter.ttk',
-        'tkinter.scrolledtext',
-        'tkinter.filedialog',
-        'tkinter.messagebox',
-    ],
+    datas=[('ui', 'ui')] + collect_data_files('selenium'),
+    hiddenimports=(
+        collect_submodules('webview')
+        + ['keyring.backends.Windows', 'win32ctypes.core']
+        + ['selenium.webdriver.chrome.webdriver', 'selenium.webdriver.edge.webdriver']
+    ),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[
-        # Remove unused large packages to reduce .exe size
-        'matplotlib',
-        'scipy',
-        'numpy.distutils',
-        'PIL',
-        'PyQt5',
-        'wx',
-    ],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
+    excludes=['matplotlib', 'scipy', 'PyQt5', 'PyQt6', 'PySide6', 'tkinter', 'pytest'],
     cipher=block_cipher,
     noarchive=False,
 )
@@ -74,13 +37,9 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    upx_exclude=[],
+    upx=False,
     runtime_tmpdir=None,
-    console=False,          # no console window -- GUI only
+    console=False,          # window app, no console
     disable_windowed_traceback=False,
     target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    # icon='icon.ico',      # uncomment and add icon.ico to use a custom icon
 )

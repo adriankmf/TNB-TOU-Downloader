@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TNB Smart Sync</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ── Login ─────────────────────────────────────────────────────────── -->
+<section id="loginView" class="login-view hidden">
+  <form id="loginForm" class="login-card" autocomplete="on">
+    <div class="brand"><span class="bolt">⚡</span> TNB Smart Sync</div>
+    <p class="muted">Sign in with your myTNB account. The app logs in for you in the background &mdash; no browser to deal with.</p>
+    <label>myTNB email<input id="email" type="email" required autocomplete="username"></label>
+    <label>Password<input id="password" type="password" required autocomplete="current-password"></label>
+    <button id="loginBtn" class="btn primary wide" type="submit">Sign in</button>
+    <p class="hint">🔒 Password is saved in Windows Credential Manager, not in a file.</p>
+    <div id="loginError" class="error hidden"></div>
+    <ol id="loginLog" class="mini-log"></ol>
+  </form>
+</section>
+
+<!-- ── Main ──────────────────────────────────────────────────────────── -->
+<section id="mainView" class="main-view hidden">
+  <header class="topbar">
+    <div class="brand"><span class="bolt">⚡</span> TNB Smart Sync</div>
+    <div class="account-picker">
+      <select id="accountSelect" title="myTNB account"></select>
+      <button id="refreshAccountsBtn" class="btn ghost icon" title="Reload account list from myTNB">⟳</button>
+    </div>
+    <div class="spacer"></div>
+    <button id="syncBtn" class="btn primary">Sync now</button>
+    <button id="settingsBtn" class="btn ghost icon" title="Settings">⚙</button>
+  </header>
+
+  <div class="status-strip">
+    <span id="statusLatest">No data yet</span>
+    <span class="dot">•</span>
+    <a href="#" id="openFile" title="Open the Excel file">Open Excel</a>
+    <span class="dot">•</span>
+    <a href="#" id="openFolder">Open folder</a>
+    <span id="gapBadge" class="badge warn hidden" title="Days in your history with fewer than 48 readings"></span>
+    <button id="fillGapsBtn" class="btn small hidden">Fill gaps</button>
+    <div class="spacer"></div>
+    <div class="segmented" id="rangeSeg">
+      <button data-range="30" class="active">30 days</button>
+      <button data-range="90">90 days</button>
+      <button data-range="365">1 year</button>
+      <button data-range="all">All</button>
+    </div>
+  </div>
+
+  <div class="progress hidden" id="progress"><div id="progressBar"></div></div>
+
+  <main class="content">
+    <div id="emptyState" class="empty hidden">
+      <h2>No usage saved for this account yet</h2>
+      <p class="muted">Press <b>Sync now</b> to download its half-hour readings into Excel.</p>
+    </div>
+
+    <div id="dashboard">
+      <div class="kpis">
+        <div class="kpi"><div class="kpi-label">Total usage</div><div class="kpi-value" id="kTotal">–</div><div class="kpi-sub" id="kDays"></div></div>
+        <div class="kpi"><div class="kpi-label">Average per day</div><div class="kpi-value" id="kAvg">–</div><div class="kpi-sub" id="kMax"></div></div>
+        <div class="kpi peak"><div class="kpi-label">Peak share</div><div class="kpi-value" id="kPeak">–</div><div class="kpi-sub" id="kPeakKwh"></div></div>
+        <div class="kpi off"><div class="kpi-label">Off-peak</div><div class="kpi-value" id="kOff">–</div><div class="kpi-sub" id="kEst"></div></div>
+      </div>
+
+      <div class="grid">
+        <div class="card span2">
+          <div class="card-head"><h3>Daily usage</h3><span class="muted small">Peak (Mon–Fri 2 PM–10 PM) vs off-peak</span></div>
+          <div class="chart-box tall"><canvas id="dailyChart"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Peak vs off-peak</h3></div>
+          <div class="chart-box"><canvas id="splitChart"></canvas></div>
+        </div>
+        <div class="card span2">
+          <div class="card-head"><h3>Average load profile</h3><span class="muted small">kWh per half hour</span></div>
+          <div class="chart-box"><canvas id="profileChart"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3 id="latestTitle">Latest full day</h3></div>
+          <div class="chart-box"><canvas id="latestChart"></canvas></div>
+        </div>
+        <div class="card span3">
+          <div class="card-head"><h3>Monthly totals</h3><span class="muted small">last 24 months</span></div>
+          <div class="chart-box"><canvas id="monthlyChart"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="log-panel" id="logPanel">
+    <div class="log-head" id="logToggle"><span>Activity</span><span id="logLast" class="muted small"></span><span class="chev">▴</span></div>
+    <ol id="log" class="log"></ol>
+  </footer>
+</section>
+
+<!-- ── Settings dialog ───────────────────────────────────────────────── -->
+<dialog id="settingsDlg">
+  <form method="dialog" class="dlg">
+    <h3>Settings</h3>
+    <label>Excel folder
+      <div class="row"><input id="folderInput" readonly><button id="pickFolderBtn" type="button" class="btn">Change…</button></div>
+      <span class="hint">One file per account: tnb_usage_&lt;account no&gt;.xlsx</span>
+    </label>
+    <label>Browser used in the background
+      <select id="browserInput"><option value="chrome">Google Chrome</option><option value="edge">Microsoft Edge</option></select>
+    </label>
+    <label>First day to download (new accounts)
+      <input id="startInput" type="date">
+    </label>
+    <div class="signed-in">Signed in as <b id="signedInAs"></b></div>
+    <div id="settingsError" class="error hidden"></div>
+    <div class="row end">
+      <button id="logBtn" type="button" class="btn ghost">Open log</button>
+      <button id="signOutBtn" type="button" class="btn danger">Sign out</button>
+      <div class="spacer"></div>
+      <button value="cancel" class="btn ghost">Close</button>
+      <button id="saveSettingsBtn" type="button" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

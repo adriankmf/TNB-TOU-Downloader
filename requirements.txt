@@ -1,5 +1,7 @@
-requests>=2.31.0
-pandas>=2.0.0
-openpyxl>=3.1.0
-cloudscraper>=1.2.71
-pyinstaller>=6.0.0
+pandas>=2.0
+openpyxl>=3.1
+selenium>=4.20
+pywebview>=5.0
+keyring>=25.0
+pytest>=8.0
+pyinstaller>=6.0

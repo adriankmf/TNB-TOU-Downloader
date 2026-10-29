@@ -1,92 +1,95 @@
 """
 config.py
 ---------
-Loads all runtime configuration from settings.json (written by the GUI).
-Falls back to safe defaults for any missing key.
+settings.json next to app.py (or next to TNB_TOU.exe). Holds NO password -- that lives in
+Windows Credential Manager (see credentials.py).
 
-Call config.reload(dict) whenever the user saves new settings in the GUI
-— all other modules reference config.* at call-time, so they pick up the
-updated values immediately without needing a restart.
+Schema:
+  email              myTNB login email
+  excel_folder       folder holding one tnb_usage_<caNo>.xlsx per account
+  selected_account   caNo shown/synced by default
+  browser            "chrome" (default) or "edge"
+  bootstrap_start    first day to download for an account with no Excel file yet (YYYY-MM-DD)
+  accounts           {caNo: {name, guid, smartmeter_url, sdpudcid}} learned from the portal
 """
 
+from __future__ import annotations
+
 import json
+import logging
 import sys
-from datetime import datetime
 from pathlib import Path
 
-# ── App directory (works both as .py and as a PyInstaller .exe) ───────────────
+logger = logging.getLogger(__name__)
+
 if getattr(sys, "frozen", False):
     APP_DIR = Path(sys.executable).parent
 else:
     APP_DIR = Path(__file__).parent
 
 SETTINGS_FILE = APP_DIR / "settings.json"
+BROWSER_PROFILE_DIR = APP_DIR / "browser_profile"
+LOG_FILE = APP_DIR / "tnb_sync.log"
+
+DEFAULT_BOOTSTRAP_START = "2024-01-01"
+BROWSERS = ("chrome", "edge")
+
+# Keys from the cookie/cloudscraper era. Dropped on load so the plaintext password and stale
+# cookies never get written back to disk.
+LEGACY_KEYS = ("cookie_string", "saved_session_cookie", "password", "smartmeter_url",
+               "sdpudcid", "api_base_url", "excel_path", "username", "bootstrap_start_date",
+               "bootstrap_days", "request_timeout", "fetch_chunk_days")
+
+DEFAULTS = {
+    "email": "",
+    "excel_folder": str(APP_DIR),
+    "selected_account": "",  # filled with the first account found at sign-in
+    "browser": "chrome",
+    "bootstrap_start": DEFAULT_BOOTSTRAP_START,
+    "accounts": {},
+}
 
 
-# ── Internal loader ────────────────────────────────────────────────────────────
+def migrate_legacy(raw: dict) -> dict:
+    """Map an old settings.json onto the new schema (pure; returns a new dict)."""
+    settings = {**DEFAULTS, **{k: v for k, v in raw.items() if k not in LEGACY_KEYS}}
+    settings["accounts"] = {k: dict(v) for k, v in (raw.get("accounts") or {}).items()}
 
-def _load() -> dict:
-    if SETTINGS_FILE.exists():
+    if not settings["email"] and raw.get("username"):
+        settings["email"] = raw["username"]
+    if raw.get("excel_path") and "excel_folder" not in raw:
+        settings["excel_folder"] = str(Path(raw["excel_path"]).parent)
+        settings["legacy_excel"] = raw["excel_path"]
+    if raw.get("bootstrap_start_date") and "bootstrap_start" not in raw:
+        settings["bootstrap_start"] = raw["bootstrap_start_date"]
+    if settings["browser"] not in BROWSERS:
+        settings["browser"] = "chrome"
+    return settings
+
+
+def load_settings(path: Path = SETTINGS_FILE) -> dict:
+    raw: dict = {}
+    if path.exists():
         try:
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.warning("settings.json unreadable (%s) -- using defaults.", exc)
+    settings = migrate_legacy(raw)
+    if any(key in raw for key in LEGACY_KEYS):
+        save_settings(settings, path)
+        logger.info("Upgraded settings.json to the new format (old cookie/password keys removed).")
+    return settings
 
 
-def _parse_start_date(raw: str):
-    if raw:
-        try:
-            return datetime.strptime(raw.strip(), "%Y-%m-%d")
-        except ValueError:
-            pass
-    return None
+def save_settings(settings: dict, path: Path = SETTINGS_FILE) -> None:
+    clean = {k: v for k, v in settings.items() if k not in LEGACY_KEYS}
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(clean, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
 
 
-# ── Initial load ───────────────────────────────────────────────────────────────
-
-_s = _load()
-
-TNB_COOKIE_STRING: str  = _s.get("cookie_string", "")
-TNB_USERNAME: str       = _s.get("username", "")
-TNB_PASSWORD: str       = _s.get("password", "")
-TNB_SDPUDCID: str       = _s.get("sdpudcid", "")
-TNB_API_BASE_URL: str   = _s.get("api_base_url", "https://smartliving.myaccount.mytnb.com.my")
-TNB_LOGIN_PATH: str     = "/User/Login"
-TNB_ORG_NAME: str       = "TNB"
-TNB_TIMEZONE: str       = "Asia/Kuala_Lumpur"
-TNB_DATEFMT_API: str    = "yyyy-MM-dd HH:mm"
-TNB_DATEFMT_PY: str     = "%Y-%m-%d %H:%M"
-TNB_GRANULARITY: str    = "MIN30"
-
-EXCEL_FILE_PATH: Path   = Path(_s.get("excel_path", str(APP_DIR / "tnb_usage.xlsx")))
-BOOTSTRAP_START_DATE    = _parse_start_date(_s.get("bootstrap_start_date", ""))
-BOOTSTRAP_DAYS: int     = int(_s.get("bootstrap_days", 30))
-REQUEST_TIMEOUT: int    = int(_s.get("request_timeout", 30))
-
-
-# ── Live reload (called by GUI after user saves settings) ──────────────────────
-
-def reload(new_settings: dict) -> None:
-    """
-    Update every module-level variable from *new_settings* and persist to disk.
-    All other modules read config.* at call-time, so they see the new values
-    immediately without restarting.
-    """
-    global TNB_COOKIE_STRING, TNB_USERNAME, TNB_PASSWORD, TNB_SDPUDCID, TNB_API_BASE_URL
-    global EXCEL_FILE_PATH, BOOTSTRAP_START_DATE, BOOTSTRAP_DAYS, REQUEST_TIMEOUT
-
-    # Persist
-    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(new_settings, f, indent=2, ensure_ascii=False)
-
-    TNB_COOKIE_STRING  = new_settings.get("cookie_string", "")
-    TNB_USERNAME       = new_settings.get("username", "")
-    TNB_PASSWORD       = new_settings.get("password", "")
-    TNB_SDPUDCID       = new_settings.get("sdpudcid", "")
-    TNB_API_BASE_URL   = new_settings.get("api_base_url", "https://smartliving.myaccount.mytnb.com.my")
-    EXCEL_FILE_PATH    = Path(new_settings.get("excel_path", str(APP_DIR / "tnb_usage.xlsx")))
-    BOOTSTRAP_DAYS     = int(new_settings.get("bootstrap_days", 30))
-    REQUEST_TIMEOUT    = int(new_settings.get("request_timeout", 30))
-    BOOTSTRAP_START_DATE = _parse_start_date(new_settings.get("bootstrap_start_date", ""))
+def with_account(settings: dict, ca_no: str, **fields) -> dict:
+    """Return a copy of settings with the cached fields of one account updated."""
+    accounts = {k: dict(v) for k, v in settings.get("accounts", {}).items()}
+    accounts[ca_no] = {**accounts.get(ca_no, {}), **{k: v for k, v in fields.items() if v}}
+    return {**settings, "accounts": accounts}

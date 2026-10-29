@@ -1,117 +1,87 @@
 """
 main.py
 -------
-Entry point for the TNB Smart Sync Data Downloader.
+Command-line sync (no window). Uses the same settings.json and saved password as the app,
+so sign in once in the app first ("Start TNB Sync.bat").
 
-Run with:
-    python main.py
-
-The script follows this sequence:
-  1. Determine the start datetime (watermark or bootstrap).
-  2. Fetch new 30-minute interval data from the myTNB API.
-  3. Deduplicate and append only new rows to tnb_usage.xlsx.
-  4. Print a human-readable summary.
-
-All heavy logic lives in the domain modules:
-  config.py        — configuration / credentials
-  tnb_auth.py      — authentication (token management)
-  tnb_api.py       — API calls & JSON flattening
-  excel_handler.py — Excel read / watermark / append
+  python main.py                       sync the account selected in the app
+  python main.py --account 210000000002
+  python main.py --fill-gaps           also re-download incomplete days inside the history
+  python main.py --folder D:\\copy      write to another folder (handy for testing on a copy)
+  python main.py --list                show the accounts on your myTNB login
 """
 
+from __future__ import annotations
+
+import argparse
 import logging
 import sys
-from datetime import datetime
 
-import config          # noqa: F401 — triggers credential validation at import time
-import excel_handler
-import tnb_api
-
-
-# ── Logging setup ─────────────────────────────────────────────────────────────
-# Use UTF-8 for the stream handler so Unicode chars (arrows, tick marks) don't
-# crash on Windows terminals that default to CP1252.
-_handler = logging.StreamHandler(stream=sys.stdout)
-_handler.setFormatter(logging.Formatter(
-    fmt="%(asctime)s  %(levelname)-8s  %(name)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-))
-try:
-    # Python 3.9+ supports encoding= on StreamHandler
-    import io
-    _handler.stream = io.TextIOWrapper(
-        sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True
-    )
-except AttributeError:
-    pass  # Python <3.9 or no buffer — use as-is, unicode chars will be replaced
-
-logging.basicConfig(level=logging.INFO, handlers=[_handler])
-logger = logging.getLogger(__name__)
+import config
+import credentials
+import sync
+from excel_store import ExcelLockedError
+from tnb_data import ApiError
+from tnb_portal import LoginError, PortalError, TnbPortal
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Download myTNB 30-minute usage into Excel.")
+    parser.add_argument("--account", help="myTNB account number (default: the one selected in the app)")
+    parser.add_argument("--fill-gaps", action="store_true", help="re-download incomplete days in the history")
+    parser.add_argument("--folder", help="Excel folder to use instead of the one in settings")
+    parser.add_argument("--list", action="store_true", help="list accounts and exit")
+    parser.add_argument("--attach", metavar="HOST:PORT",
+                        help="use an already-open, logged-in Chrome (started with --remote-debugging-port)")
+    args = parser.parse_args(argv)
 
-def main() -> None:
-    logger.info("=" * 60)
-    logger.info("TNB Smart Sync — starting run at %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    logger.info("=" * 60)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S",
+                        handlers=[logging.StreamHandler(sys.stdout),
+                                  logging.FileHandler(config.LOG_FILE, encoding="utf-8")])
+    for noisy in ("selenium", "urllib3"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+    log = logging.getLogger("tnb").info
 
-    # ── Step 1: Determine fetch window ────────────────────────────────────
-    start_dt = excel_handler.get_start_datetime()
-    end_dt   = datetime.now()
+    settings = config.load_settings()
+    password = credentials.get_password(settings.get("email", ""))
+    if not password and not args.attach:
+        log("No saved password -- trying the browser's saved myTNB session.")
 
-    # Guard: if start is already in the future (shouldn't happen normally)
-    # or within the last interval, there is nothing to fetch yet.
-    from datetime import timedelta
-    if start_dt >= end_dt - timedelta(minutes=excel_handler.INTERVAL_MINUTES):
-        logger.info(
-            "Start datetime (%s) is within one interval of now (%s). "
-            "No new data available yet — try again after the next 30-minute window.",
-            start_dt.strftime("%Y-%m-%d %H:%M"),
-            end_dt.strftime("%Y-%m-%d %H:%M"),
-        )
-        _print_summary(0)
-        return
+    def portal_factory(s: dict, log_fn):
+        return TnbPortal(config.BROWSER_PROFILE_DIR, s.get("browser", "chrome"), log=log_fn, attach=args.attach)
 
-    # ── Step 2: Fetch from API ────────────────────────────────────────────
     try:
-        new_data_df = tnb_api.get_usage_dataframe(start_dt, end_dt)
-    except Exception as exc:
-        logger.error("Failed to fetch data from myTNB API: %s", exc)
-        logger.error("Aborting run — no changes made to the Excel file.")
-        sys.exit(1)
+        settings = sync.migrate_if_needed(settings, log)
+        config.save_settings(settings)
+        if args.list:
+            accounts, settings, _ = sync.refresh_accounts(settings, password, log=log, portal_factory=portal_factory)
+            config.save_settings(settings)
+            for acc in accounts:
+                log(f"  {acc['ca_no']}  {acc['name']}")
+            return 0
 
-    # ── Step 3: Handle "no new data" gracefully ───────────────────────────
-    if new_data_df.empty:
-        logger.info(
-            "The API returned no records for the window %s → %s. "
-            "This is expected if you have already synced recently.",
-            start_dt.strftime("%Y-%m-%d %H:%M"),
-            end_dt.strftime("%Y-%m-%d %H:%M"),
-        )
-        _print_summary(0)
-        return
+        ca_no = args.account or settings.get("selected_account")
+        if not ca_no:
+            log("FAILED: no account selected yet. Sign in once in the app, or use --list / --account.")
+            return 2
+        result, settings = sync.sync_account(settings, ca_no, password, fill_gaps=args.fill_gaps,
+                                             folder=args.folder, log=log,
+                                             portal_factory=portal_factory)
+        config.save_settings(settings)
+    except LoginError as exc:
+        log(f"FAILED: {exc} Open 'Start TNB Sync.bat' and sign in once.")
+        return 2
+    except (PortalError, ApiError, ExcelLockedError, ValueError) as exc:
+        log(f"FAILED: {exc}")
+        return 1
 
-    # ── Step 4: Append to Excel ───────────────────────────────────────────
-    try:
-        rows_added = excel_handler.append_new_rows(new_data_df)
-    except Exception as exc:
-        logger.error("Failed to write data to Excel: %s", exc)
-        logger.error("Aborting run — the Excel file may be in an inconsistent state.")
-        sys.exit(1)
-
-    _print_summary(rows_added)
-
-
-def _print_summary(rows_added: int) -> None:
-    """Print the end-of-run summary that satisfies the acceptance criteria."""
-    logger.info("-" * 60)
-    if rows_added == 0:
-        logger.info("SUMMARY: No new records added (data is already up to date).")
-    else:
-        logger.info("SUMMARY: Added %d new record(s) to '%s'.", rows_added, config.EXCEL_FILE_PATH)
-    logger.info("-" * 60)
+    log(f"Done. {result.rows_added} new reading(s) -> {result.file}")
+    log(f"Data up to: {result.latest or '-'}   calls: {result.calls}")
+    if result.gaps:
+        log(f"{len(result.gaps)} incomplete day(s) in the history (run with --fill-gaps to retry): "
+            + ", ".join(result.gaps[:15]) + (" ..." if len(result.gaps) > 15 else ""))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -8,6 +8,14 @@ settings.json
 dist/
 build/
 
+# Old experiments / archived copies, and local data backups
+_old/
+data/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
 # Python cache
 __pycache__/
 *.pyc
@@ -22,3 +30,14 @@ env/
 # IDE
 .vscode/
 .idea/
+
+# App runtime files
+browser_profile/
+browser_profile_edge/
+tnb_sync.log*
+*.saving.xlsx
+settings.tmp
+TNB login.txt
+
+# Local working notes (personal paths and account details)
+HANDOFF.md
