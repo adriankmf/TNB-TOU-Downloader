@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.0.1 — 30 Oct 2026
+
+### New
+- **First-run setup screen.** After the first sign-in the app asks where to keep the Excel files and
+  which date to download from (default 2 months back) before anything is downloaded. Existing installs
+  see it once too. The date can't be in the future.
+
+- **Download years of history safely, batch by batch.** At most 6 months per batch, a 3-minute pause
+  between batches (browser kept open, no new login), newest days first, then older history backwards.
+  If TNB limits the account anyway, the app waits 35 minutes and carries on. A **Stop** button keeps what
+  was downloaded, and the next Sync continues. Picking an earlier date in Settings now adds the older
+  history to an existing file too. CLI: one batch per run, or `--all`.
+- Setup screen: 2 months / 1 / 2 / 3 years buttons with a time estimate.
+
+### Fixed
+- **Writing big Excel files is much faster.** Each appended row used to rescan the whole sheet.
+- **First download now starts 2 months back** instead of 1 Jan 2024. Pulling ~2 years in one go hit
+  TNB's throttle and blocked the account for about 30 minutes. Installs that still had the old
+  2024-01-01 default are switched to the new one; a date you picked yourself is kept.
+  (The 30 days / 90 days buttons only change the dashboard view, not what is downloaded.)
+- **No more usage statistics to plausible.io.** Selenium Manager (the helper that finds chromedriver)
+  sent anonymous stats by default; the app now turns that off (`SE_AVOID_STATS=true`).
+- Usage requests to TNB are now spaced at least 5 seconds apart.
+
 ## v2.0 — 29 Oct 2026
 
 A rewrite. The app now logs in to myTNB by itself in a hidden browser, so you no longer paste cookies.

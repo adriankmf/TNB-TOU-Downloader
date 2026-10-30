@@ -35,13 +35,37 @@ The first start installs the packages from `requirements.txt` by itself.
 | What | How |
 |---|---|
 | Open the app | Double-click **Start TNB Sync.bat** (or `dist\TNB_TOU.exe`) |
-| First time | Sign in with your myTNB email + password, then press **Sync now** |
+| First time | Sign in with your myTNB email + password, choose the Excel folder and the date to download from, then press **Sync now** |
 | Sync without the window | **Quick Sync.bat** (syncs the account selected in the app) |
 | Re-try incomplete days | Click **Fill gaps** in the app, or `python main.py --fill-gaps` |
 | Other account from CLI | `python main.py --account 210000000002` / `python main.py --list` |
 | Build the exe | **Build EXE.bat** (runs the tests first; keeps `dist\settings.json`) |
 
-Settings (gear icon): Excel folder, browser (Chrome/Edge), first download date for new accounts, sign out.
+Settings (gear icon): Excel folder, browser (Chrome/Edge), first download date for new accounts
+(default: 2 months back), sign out.
+
+### Downloading years of history
+
+Pick any start date (the setup screen has 2 months / 1 / 2 / 3 years buttons). The app never asks TNB
+for it in one go:
+
+- **Batches**: at most 6 months per batch (six 30-day requests, 5 s apart).
+- **Pauses**: 3 minutes between batches, with the hidden browser left open so there is no new login.
+- **Order**: newest days first, then older history going backwards, so a stopped download never
+  leaves a hole in the Excel file.
+- **If TNB still limits the account**: the app saves what arrived, waits 35 minutes and carries on.
+  It gives up after two such waits in a row.
+- **Meter start**: when TNB has no readings for a whole month, that is taken as the meter's first data
+  and never asked for again.
+- **Stop** keeps everything downloaded so far; the next Sync carries on where it stopped.
+
+3 years takes about 7 batches, roughly 30 minutes, and you can use the dashboard meanwhile. The
+command line does one batch per run (`Quick Sync.bat`), or all of them with `python main.py --all`.
+To add older history later, pick an earlier date in Settings and press Sync.
+
+Network use: the app only talks to myTNB. The one exception is Selenium Manager downloading a matching
+chromedriver from Google the first time (or after a Chrome update). Selenium's usage statistics
+(to plausible.io) are switched off.
 
 ## Excel files
 

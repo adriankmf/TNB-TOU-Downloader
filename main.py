@@ -7,6 +7,7 @@ so sign in once in the app first ("Start TNB Sync.bat").
   python main.py                       sync the account selected in the app
   python main.py --account 210000000002
   python main.py --fill-gaps           also re-download incomplete days inside the history
+  python main.py --all                 keep going batch by batch until all history is downloaded
   python main.py --folder D:\\copy      write to another folder (handy for testing on a copy)
   python main.py --list                show the accounts on your myTNB login
 """
@@ -29,6 +30,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Download myTNB 30-minute usage into Excel.")
     parser.add_argument("--account", help="myTNB account number (default: the one selected in the app)")
     parser.add_argument("--fill-gaps", action="store_true", help="re-download incomplete days in the history")
+    parser.add_argument("--all", action="store_true",
+                        help="keep going batch by batch (3 min pauses) until all history is downloaded")
     parser.add_argument("--folder", help="Excel folder to use instead of the one in settings")
     parser.add_argument("--list", action="store_true", help="list accounts and exit")
     parser.add_argument("--attach", metavar="HOST:PORT",
@@ -64,9 +67,14 @@ def main(argv: list[str] | None = None) -> int:
         if not ca_no:
             log("FAILED: no account selected yet. Sign in once in the app, or use --list / --account.")
             return 2
-        result, settings = sync.sync_account(settings, ca_no, password, fill_gaps=args.fill_gaps,
-                                             folder=args.folder, log=log,
-                                             portal_factory=portal_factory)
+        if args.all:
+            result, settings = sync.download_all(settings, ca_no, password, fill_gaps=args.fill_gaps,
+                                                 folder=args.folder, log=log, save=config.save_settings,
+                                                 portal_factory=portal_factory)
+        else:  # one batch per run (at most 6 months); the next run carries on
+            result, settings = sync.sync_account(settings, ca_no, password, fill_gaps=args.fill_gaps,
+                                                 folder=args.folder, log=log,
+                                                 portal_factory=portal_factory)
         config.save_settings(settings)
     except LoginError as exc:
         log(f"FAILED: {exc} Open 'Start TNB Sync.bat' and sign in once.")
@@ -76,7 +84,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     log(f"Done. {result.rows_added} new reading(s) -> {result.file}")
-    log(f"Data up to: {result.latest or '-'}   calls: {result.calls}")
+    log(f"Data from {result.first or '-'} to {result.latest or '-'}   calls: {result.calls}")
+    if result.more:
+        log("More history to download -- run again later (or use --all). " + result.stopped)
     if result.gaps:
         log(f"{len(result.gaps)} incomplete day(s) in the history (run with --fill-gaps to retry): "
             + ", ".join(result.gaps[:15]) + (" ..." if len(result.gaps) > 15 else ""))

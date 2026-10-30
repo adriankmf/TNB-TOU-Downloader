@@ -22,6 +22,7 @@ from typing import Iterable
 
 import pandas as pd
 from openpyxl import Workbook, load_workbook
+from openpyxl.cell import Cell
 
 from tnb_data import (COL_CATEGORY, COL_KWH, COL_RATEPLAN, COL_TIMESTAMP, COLUMNS,
                       POINTS_PER_DAY, UsageRow, days_between)
@@ -72,6 +73,12 @@ def watermark(path: Path) -> datetime | None:
     finally:
         wb.close()
     return max(stamps) if stamps else None
+
+
+def first_day(path: Path) -> date | None:
+    """First day with any saved reading, or None for a missing/empty file."""
+    df = read_frame(path)
+    return None if df.empty else df["Timestamp"].min().date()
 
 
 def find_gaps(df: pd.DataFrame) -> list[date]:
@@ -148,8 +155,11 @@ def _pad(row: tuple) -> list:
 
 
 def _append(ws, values: tuple) -> None:
-    ws.append(list(values))
-    ws.cell(row=ws.max_row, column=1).number_format = TIMESTAMP_FORMAT
+    # Format the timestamp cell before appending: looking it up afterwards via ws.max_row
+    # rescans the whole sheet on every row and made big files take minutes.
+    stamp = Cell(ws, value=values[0])
+    stamp.number_format = TIMESTAMP_FORMAT
+    ws.append([stamp, *values[1:]])
 
 
 def _write_new(path: Path, rows: list[UsageRow]) -> None:

@@ -23,6 +23,34 @@
   </form>
 </section>
 
+<!-- ── First-run setup (once, after the first sign-in) ──────────────── -->
+<section id="setupView" class="login-view hidden">
+  <form id="setupForm" class="login-card setup-card">
+    <div class="brand"><span class="bolt">⚡</span> Before the first download</div>
+    <p class="muted">Signed in. Choose where to keep the Excel files and how far back to download.
+      You can change both later in Settings (⚙).</p>
+    <label>Excel folder
+      <div class="row"><input id="setupFolder" readonly><button id="setupPickFolder" type="button" class="btn">Change…</button></div>
+      <span class="hint">One file per account: tnb_usage_&lt;account no&gt;.xlsx</span>
+    </label>
+    <label>Download usage from
+      <div class="row quick" id="setupQuick">
+        <button type="button" class="btn small" data-months="2">2 months</button>
+        <button type="button" class="btn small" data-months="12">1 year</button>
+        <button type="button" class="btn small" data-months="24">2 years</button>
+        <button type="button" class="btn small" data-months="36">3 years</button>
+      </div>
+      <input id="setupStart" type="date" required>
+      <span class="hint" id="setupEstimate"></span>
+      <span class="hint">Long ranges are downloaded in batches of 6 months with a 3-minute pause between
+        them, so TNB does not block the account. The newest days come first, and you can use the app
+        (or press Stop) while it runs. Stopped downloads continue on the next Sync.</span>
+    </label>
+    <button id="setupBtn" class="btn primary wide" type="submit">Continue</button>
+    <div id="setupError" class="error hidden"></div>
+  </form>
+</section>
+
 <!-- ── Main ──────────────────────────────────────────────────────────── -->
 <section id="mainView" class="main-view hidden">
   <header class="topbar">
@@ -33,6 +61,7 @@
     </div>
     <div class="spacer"></div>
     <button id="syncBtn" class="btn primary">Sync now</button>
+    <button id="stopBtn" class="btn danger hidden" title="Stop after the current request; everything downloaded so far is kept">Stop</button>
     <button id="settingsBtn" class="btn ghost icon" title="Settings">⚙</button>
   </header>
 
@@ -42,6 +71,7 @@
     <a href="#" id="openFile" title="Open the Excel file">Open Excel</a>
     <span class="dot">•</span>
     <a href="#" id="openFolder">Open folder</a>
+    <span id="jobStatus" class="badge hidden"></span>
     <span id="gapBadge" class="badge warn hidden" title="Days in your history with fewer than 48 readings"></span>
     <button id="fillGapsBtn" class="btn small hidden">Fill gaps</button>
     <div class="spacer"></div>
@@ -111,8 +141,11 @@
     <label>Browser used in the background
       <select id="browserInput"><option value="chrome">Google Chrome</option><option value="edge">Microsoft Edge</option></select>
     </label>
-    <label>First day to download (new accounts)
+    <label>Download usage from
       <input id="startInput" type="date">
+      <small class="hint">Pick an earlier date and press Sync to add older history. Long ranges are
+        downloaded in batches of 6 months with a 3-minute pause between them, so TNB does not block
+        the account.</small>
     </label>
     <div class="signed-in">Signed in as <b id="signedInAs"></b></div>
     <div id="settingsError" class="error hidden"></div>

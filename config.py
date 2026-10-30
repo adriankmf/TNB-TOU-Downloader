@@ -9,8 +9,10 @@ Schema:
   excel_folder       folder holding one tnb_usage_<caNo>.xlsx per account
   selected_account   caNo shown/synced by default
   browser            "chrome" (default) or "edge"
-  bootstrap_start    first day to download for an account with no Excel file yet (YYYY-MM-DD)
+  bootstrap_start    first day to download for an account with no Excel file yet (YYYY-MM-DD);
+                     "" = DEFAULT_BOOTSTRAP_DAYS before the first sync
   accounts           {caNo: {name, guid, smartmeter_url, sdpudcid}} learned from the portal
+  setup_done         true once the first-run screen (folder + first download date) is finished
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -31,7 +34,12 @@ SETTINGS_FILE = APP_DIR / "settings.json"
 BROWSER_PROFILE_DIR = APP_DIR / "browser_profile"
 LOG_FILE = APP_DIR / "tnb_sync.log"
 
-DEFAULT_BOOTSTRAP_START = "2024-01-01"
+# First sync of a new account goes back this far unless the user picks a date. A long history
+# is many requests in a row and makes TNB block the session for ~30 min.
+DEFAULT_BOOTSTRAP_DAYS = 60
+# v2.0 shipped "2024-01-01" as the default and saved it into settings.json. Treat it as
+# "not chosen" so existing installs get the short default too.
+OLD_DEFAULT_BOOTSTRAP_START = "2024-01-01"
 BROWSERS = ("chrome", "edge")
 
 # Keys from the cookie/cloudscraper era. Dropped on load so the plaintext password and stale
@@ -45,9 +53,27 @@ DEFAULTS = {
     "excel_folder": str(APP_DIR),
     "selected_account": "",  # filled with the first account found at sign-in
     "browser": "chrome",
-    "bootstrap_start": DEFAULT_BOOTSTRAP_START,
+    "bootstrap_start": "",  # "" = DEFAULT_BOOTSTRAP_DAYS before the first sync
     "accounts": {},
+    "setup_done": False,  # first-run screen (Excel folder + first download date) finished
 }
+
+
+def default_bootstrap_start(today: date) -> str:
+    return (today - timedelta(days=DEFAULT_BOOTSTRAP_DAYS)).isoformat()
+
+
+def parse_bootstrap_start(value: str | None, today: date) -> str:
+    """Validate a first-download date from the UI. "" (auto) when empty or left at the default."""
+    if not value or value == default_bootstrap_start(today):
+        return ""
+    try:
+        picked = datetime.strptime(value, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        raise ValueError("First download date must look like 2026-01-01.") from None
+    if picked > today:
+        raise ValueError("First download date cannot be in the future.")
+    return picked.isoformat()
 
 
 def migrate_legacy(raw: dict) -> dict:
@@ -62,6 +88,8 @@ def migrate_legacy(raw: dict) -> dict:
         settings["legacy_excel"] = raw["excel_path"]
     if raw.get("bootstrap_start_date") and "bootstrap_start" not in raw:
         settings["bootstrap_start"] = raw["bootstrap_start_date"]
+    if settings["bootstrap_start"] == OLD_DEFAULT_BOOTSTRAP_START:
+        settings["bootstrap_start"] = ""
     if settings["browser"] not in BROWSERS:
         settings["browser"] = "chrome"
     return settings

@@ -131,6 +131,19 @@ def days_between(start: date, end: date) -> list[date]:
     return [start + timedelta(days=i) for i in range((end - start).days)]
 
 
+def plan_chunks_newest_first(start: date, end: date,
+                             max_days: int = MAX_CHUNK_DAYS) -> list[tuple[date, date]]:
+    """Split [start, end) into windows of at most max_days, walking back from end."""
+    if max_days < 1:
+        raise ValueError("max_days must be >= 1")
+    chunks, cursor = [], end
+    while cursor > start:
+        stop = max(cursor - timedelta(days=max_days), start)
+        chunks.append((stop, cursor))
+        cursor = stop
+    return chunks
+
+
 def plan_chunks(start: date, end: date, max_days: int = MAX_CHUNK_DAYS) -> list[tuple[date, date]]:
     """Split [start, end) into consecutive windows of at most max_days."""
     if max_days < 1:

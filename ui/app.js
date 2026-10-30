@@ -12,6 +12,8 @@ window.tnb = {
   on(kind, payload) {
     if (kind === "log") addLog(payload);
     if (kind === "progress") setProgress(payload);
+    if (kind === "status") setJobStatus(payload);
+    if (kind === "batch") loadDashboard();
   },
 };
 
@@ -35,6 +37,27 @@ function setProgress(value) {
   $("progressBar").style.width = value < 0 ? "" : `${Math.round(value * 100)}%`;
 }
 
+function setJobStatus(text) {
+  $("jobStatus").textContent = text || "";
+  $("jobStatus").classList.toggle("hidden", !text);
+}
+
+/* Matches sync.py: 180-day batches, ~2 min each, 3 min pause between them. */
+const BATCH_DAYS = 180, BATCH_MIN = 2, PAUSE_MIN = 3;
+
+function estimateText(fromIso) {
+  const days = Math.max(0, Math.round((Date.now() - new Date(fromIso)) / 86400000));
+  const batches = Math.max(1, Math.ceil(days / BATCH_DAYS));
+  if (batches === 1) return `About ${days} days: one batch, a few minutes.`;
+  const minutes = batches * BATCH_MIN + (batches - 1) * PAUSE_MIN;
+  const time = minutes >= 90 ? `${(minutes / 60).toFixed(1)} hours` : `${minutes} minutes`;
+  return `About ${days} days: ${batches} batches, roughly ${time} in the background.`;
+}
+
+function localIso(d) {
+  return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
 function toast(text, kind = "") {
   const el = $("toast");
   el.textContent = text;
@@ -53,6 +76,9 @@ async function call(name, ...args) {
 
 function setBusy(busy) {
   for (const id of ["syncBtn", "refreshAccountsBtn", "fillGapsBtn", "loginBtn", "accountSelect"]) $(id).disabled = busy;
+  $("stopBtn").classList.toggle("hidden", !busy);
+  $("stopBtn").disabled = false;
+  if (!busy) setJobStatus("");
   setProgress(busy ? -1 : null);
 }
 
@@ -60,11 +86,20 @@ function setBusy(busy) {
 function render(newState) {
   state = newState;
   const signedIn = state.signed_in && state.accounts.length > 0;
+  const needsSetup = signedIn && !state.setup_done;
   $("loginView").classList.toggle("hidden", signedIn);
-  $("mainView").classList.toggle("hidden", !signedIn);
+  $("setupView").classList.toggle("hidden", !needsSetup);
+  $("mainView").classList.toggle("hidden", !signedIn || needsSetup);
   if (!signedIn) {
     $("email").value = $("email").value || state.email || "";
     ($("email").value ? $("password") : $("email")).focus();
+    return;
+  }
+  if (needsSetup) {
+    $("setupFolder").value = state.excel_folder;
+    $("setupStart").value = $("setupStart").value || state.bootstrap_start;
+    $("setupStart").max = localIso(new Date());
+    $("setupEstimate").textContent = estimateText($("setupStart").value);
     return;
   }
   const select = $("accountSelect");
@@ -79,7 +114,7 @@ function render(newState) {
 }
 
 async function loadDashboard() {
-  if (!state || !state.selected_account) return;
+  if (!state || !state.selected_account || !state.setup_done) return;
   const data = await call("usage", state.selected_account, range);
   if (!data.ok) { toast(data.error, "err"); return; }
   const empty = data.empty;
@@ -181,6 +216,20 @@ async function doLogin(ev) {
   loadDashboard();
 }
 
+async function doFinishSetup(ev) {
+  ev.preventDefault();
+  $("setupError").classList.add("hidden");
+  const res = await call("finish_setup", { bootstrap_start: $("setupStart").value });
+  if (!res.ok) {
+    $("setupError").textContent = res.error;
+    $("setupError").classList.remove("hidden");
+    return;
+  }
+  render(res);
+  toast("All set. Press Sync now to start the download.", "good");
+  loadDashboard();
+}
+
 async function doSync(fillGaps = false) {
   setBusy(true);
   $("logPanel").classList.remove("collapsed");
@@ -193,10 +242,10 @@ async function doSync(fillGaps = false) {
   }
   const r = res.result;
   render(res.state);
-  let msg = `${r.rows_added.toLocaleString()} new reading(s). Data up to ${r.latest || "–"}.`;
+  let msg = `${r.rows_added.toLocaleString()} new reading(s). Data ${r.first ? `from ${r.first.slice(0, 10)} ` : ""}up to ${r.latest || "–"}.`;
   if (r.unavailable.length) msg += ` TNB had incomplete data for ${r.unavailable.length} day(s).`;
-  if (r.stopped) msg += ` Stopped early: ${r.stopped} Try again later.`;
-  toast(msg, r.stopped ? "err" : "good");
+  if (r.stopped) msg += ` ${r.stopped}${r.more ? " Press Sync to continue." : ""}`;
+  toast(msg, r.stopped && r.stopped !== "Stopped by you." ? "err" : "good");
   loadDashboard();
 }
 
@@ -237,6 +286,25 @@ async function openPath(which) {
 
 function wire() {
   $("loginForm").addEventListener("submit", doLogin);
+  $("setupForm").addEventListener("submit", doFinishSetup);
+  $("setupQuick").addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const d = new Date();
+    d.setMonth(d.getMonth() - Number(btn.dataset.months));
+    $("setupStart").value = localIso(d);
+    $("setupEstimate").textContent = estimateText($("setupStart").value);
+  });
+  $("setupStart").addEventListener("change", () => { $("setupEstimate").textContent = estimateText($("setupStart").value); });
+  $("stopBtn").addEventListener("click", async () => {
+    $("stopBtn").disabled = true;
+    setJobStatus("Stopping after the current request...");
+    await call("stop_sync");
+  });
+  $("setupPickFolder").addEventListener("click", async () => {
+    const res = await call("choose_folder");
+    if (res.ok) render(res);
+  });
   $("syncBtn").addEventListener("click", () => doSync(false));
   $("fillGapsBtn").addEventListener("click", () => doSync(true));
   $("refreshAccountsBtn").addEventListener("click", doRefreshAccounts);

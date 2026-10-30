@@ -16,7 +16,7 @@ import os
 import sys
 import threading
 from dataclasses import asdict
-from datetime import datetime
+from datetime import date, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -52,6 +52,7 @@ class Api:
         self._busy = threading.Lock()
         self._settings = config.load_settings()
         self._frame_cache: tuple = (None, None)
+        self._stop = threading.Event()  # set by the Stop button; checked between requests
 
     def attach(self, window: webview.Window) -> None:
         self._window = window
@@ -109,7 +110,8 @@ class Api:
             "selected_account": s.get("selected_account", ""),
             "excel_folder": s["excel_folder"],
             "browser": s.get("browser", "chrome"),
-            "bootstrap_start": s.get("bootstrap_start", config.DEFAULT_BOOTSTRAP_START),
+            "bootstrap_start": s.get("bootstrap_start") or config.default_bootstrap_start(date.today()),
+            "setup_done": bool(s.get("setup_done")),
             "busy": self._busy.locked(),
         }
 
@@ -171,10 +173,21 @@ class Api:
         if browser not in config.BROWSERS:
             return {"ok": False, "error": "Browser must be Chrome or Edge."}
         try:
-            datetime.strptime(start, "%Y-%m-%d")
-        except (TypeError, ValueError):
-            return {"ok": False, "error": "First download date must look like 2024-01-01."}
+            start = config.parse_bootstrap_start(start, date.today())
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
         self._save({**self._settings, "browser": browser, "bootstrap_start": start})
+        return self.get_state()
+
+    def finish_setup(self, prefs: dict) -> dict:
+        """First-run screen: the Excel folder is already set by choose_folder; save the date."""
+        try:
+            start = config.parse_bootstrap_start((prefs or {}).get("bootstrap_start"), date.today())
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        self._save({**self._settings, "bootstrap_start": start, "setup_done": True})
+        self._log(f"Setup saved. Excel folder: {self._settings['excel_folder']}. "
+                  f"First download from {start or config.default_bootstrap_start(date.today())}.")
         return self.get_state()
 
     def choose_folder(self) -> dict:
@@ -196,21 +209,43 @@ class Api:
     # -- sync + dashboard --
 
     def sync(self, ca_no: str, fill_gaps: bool = False) -> dict:
+        """Download everything missing, batch by batch with pauses (sync.download_all).
+        Can run for a long time on a first download of several years; stop_sync() ends it."""
         def work():
             name = self._settings.get("accounts", {}).get(ca_no, {}).get("name", ca_no)
             self._log(f"Sync started for {name} ({ca_no}){' with gap fill' if fill_gaps else ''}.")
-            result, settings = sync.sync_account(
+            self._stop.clear()
+            result, settings = sync.download_all(
                 self._settings, ca_no, self._password(), fill_gaps=fill_gaps,
-                log=self._log, progress=lambda p: self._emit("progress", round(p, 3)))
-            self._save(settings)
-            summary = f"Done: {result.rows_added} new reading(s), data up to {result.latest or '-'}."
+                save=self._batch_saved, log=self._log, should_stop=self._stop.is_set,
+                sleep=self._stop.wait,  # wakes at once when Stop is pressed
+                status=lambda text: self._emit("status", text),
+                progress=lambda p: self._emit("progress", round(p, 3)))
+            self._merge_sync_settings(settings)
+            summary = f"Done: {result.rows_added} new reading(s), data from {result.first or '-'} to {result.latest or '-'}."
             if result.gaps:
                 summary += f" {len(result.gaps)} incomplete day(s) in history."
             if result.stopped:
-                summary += " TNB server stopped answering; try again later for the rest."
+                summary += f" {result.stopped}"
             self._log(summary)
             return {"result": asdict(result), "state": self.get_state()}
         return self._run("Sync", work)
+
+    def stop_sync(self) -> dict:
+        if self._busy.locked():
+            self._stop.set()
+            self._log("Stopping after the current request...")
+        return {"ok": True}
+
+    def _batch_saved(self, settings: dict) -> None:
+        self._merge_sync_settings(settings)
+        self._emit("batch", None)  # the dashboard reloads to show the new days
+
+    def _merge_sync_settings(self, settings: dict) -> None:
+        """Take only the account cache from a sync: the user may change other settings
+        (selected account, browser...) while a long download is running."""
+        accounts = {**self._settings.get("accounts", {}), **settings.get("accounts", {})}
+        self._save({**self._settings, "accounts": accounts})
 
     def _frame(self, path: Path):
         """read_frame with a one-file cache, so switching the date range doesn't re-read Drive."""

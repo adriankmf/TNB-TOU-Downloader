@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from datetime import date, timedelta
@@ -29,7 +30,11 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
 
-from selenium import webdriver
+# Selenium Manager (the helper that finds chromedriver) sends anonymous usage stats to
+# plausible.io unless this is set. Must be in the environment before it first runs.
+os.environ["SE_AVOID_STATS"] = "true"
+
+from selenium import webdriver  # noqa: E402 -- after the env var above
 from selenium.common.exceptions import JavascriptException, SessionNotCreatedException, WebDriverException
 
 from tnb_data import ServerError, UsageRow, build_timeseries_path, parse_timeseries
@@ -50,6 +55,9 @@ DATA_READY_TIMEOUT_S = 40
 DATA_READY_POLL_S = 3
 DATA_READY_OK_STREAK = 2
 FETCH_TIMEOUT_S = 120
+# Pause between usage requests so a long download looks like a person clicking through months,
+# not a burst. TNB blocks the session for ~30 min when it sees too many calls too fast.
+MIN_FETCH_GAP_S = 5
 LAUNCH_RETRIES = 3
 
 _SDPUDCID_RE = re.compile(r'"sdpudcid"\s*:\s*"(\d+)"')
@@ -68,6 +76,10 @@ class LoginError(PortalError):
 
 class SessionExpired(PortalError):
     """The Smart Living tab is no longer logged in."""
+
+
+class TnbThrottled(PortalError):
+    """TNB stopped handing out data -- it limits accounts that make too many calls or logins."""
 
 
 class BrowserBusyError(PortalError):
@@ -204,6 +216,7 @@ class TnbPortal:
         # instead of launching one. Used for testing; that Chrome is left open afterwards.
         self.attach = attach
         self.driver = None
+        self._last_fetch = 0.0
 
     # -- lifecycle --
 
@@ -500,7 +513,7 @@ class TnbPortal:
                 ok_streak = ok_streak + 1 if last == "ok" else 0
                 if ok_streak >= DATA_READY_OK_STREAK:
                     return
-        raise PortalError(f"Smart Living opened but would not hand out usage data ({last}). "
+        raise TnbThrottled(f"Smart Living opened but would not hand out usage data ({last}). "
                           "TNB may be limiting repeated logins -- try again in about 30 minutes.")
 
     def _wait_url_settled(self) -> None:
@@ -530,6 +543,10 @@ class TnbPortal:
         if self._state() != "smartliving":
             raise SessionExpired("Smart Living tab is not open.")
         path = build_timeseries_path(sdpudcid, start, end)
+        wait = MIN_FETCH_GAP_S - (time.monotonic() - self._last_fetch)
+        if wait > 0:
+            time.sleep(wait)
+        self._last_fetch = time.monotonic()
         reply = self.driver.execute_async_script(_FETCH_JS, path, _FETCH_HEADERS) or {}
         status, body = reply.get("status"), reply.get("body", "")
         if status in (401, 403) or classify_url(reply.get("url", "")) == "smartliving_login":

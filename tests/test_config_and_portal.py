@@ -1,4 +1,7 @@
 import json
+from datetime import date
+
+import pytest
 
 import config
 from tnb_portal import classify_url, find_sdpudcid, parse_account_items
@@ -6,7 +9,7 @@ from tnb_portal import classify_url, find_sdpudcid, parse_account_items
 LEGACY = {
     "cookie_string": "A=B", "saved_session_cookie": "x", "password": "secret-value",
     "username": "me@example.com", "sdpudcid": "40000000000000000001",
-    "excel_path": r"D:\Data\TNB Calculator\tnb_usage.xlsx", "bootstrap_start_date": "2024-01-01",
+    "excel_path": r"D:\Data\TNB Calculator\tnb_usage.xlsx", "bootstrap_start_date": "2025-03-01",
     "smartmeter_url": "https://bad_253D", "api_base_url": "https://x", "request_timeout": 30,
 }
 
@@ -17,9 +20,45 @@ def test_migrate_legacy_drops_secrets_and_maps_fields():
     assert s["email"] == "me@example.com"
     assert s["excel_folder"].endswith("TNB Calculator")
     assert s["legacy_excel"] == LEGACY["excel_path"]
-    assert s["bootstrap_start"] == "2024-01-01"
+    assert s["bootstrap_start"] == "2025-03-01"
     assert s["accounts"] == {}  # old meter ID is dropped; it is re-detected from the portal
     assert s["selected_account"] == "" and s["browser"] == "chrome"
+
+
+def test_old_2024_default_becomes_auto():
+    assert config.DEFAULTS["bootstrap_start"] == ""
+    assert config.migrate_legacy({"bootstrap_start": "2024-01-01"})["bootstrap_start"] == ""
+    assert config.migrate_legacy({"bootstrap_start": "2025-06-01"})["bootstrap_start"] == "2025-06-01"
+
+
+def test_default_bootstrap_start_is_two_months_back():
+    assert config.default_bootstrap_start(date(2026, 10, 30)) == "2026-08-31"
+
+
+def test_first_run_setup_not_done_by_default():
+    assert config.DEFAULTS["setup_done"] is False
+    assert config.migrate_legacy({"setup_done": True})["setup_done"] is True
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("", ""),                     # empty -> auto
+    ("2026-08-31", ""),           # left at the shown default -> stays auto
+    ("2025-06-01", "2025-06-01"),
+])
+def test_parse_bootstrap_start(value, expected):
+    assert config.parse_bootstrap_start(value, date(2026, 10, 30)) == expected
+
+
+@pytest.mark.parametrize("value", ["01/06/2025", "2026-11-01"])
+def test_parse_bootstrap_start_rejects_bad_or_future(value):
+    with pytest.raises(ValueError):
+        config.parse_bootstrap_start(value, date(2026, 10, 30))
+
+
+def test_selenium_usage_stats_are_off():
+    import os
+    import tnb_portal  # noqa: F401 -- importing it sets the variable
+    assert os.environ.get("SE_AVOID_STATS") == "true"
 
 
 def test_load_settings_rewrites_file_without_password(tmp_path):

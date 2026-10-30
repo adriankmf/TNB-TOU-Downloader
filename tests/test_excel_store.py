@@ -128,3 +128,17 @@ def test_migrate_legacy_does_nothing_when_target_exists(tmp_path):
     assert excel_store.migrate_legacy(legacy, tmp_path, "1") is None
     assert legacy.exists()
     assert excel_store.migrate_legacy(tmp_path / "missing.xlsx", tmp_path, "2") is None
+
+
+def test_timestamps_keep_date_format_on_new_file_and_backfill(tmp_path):
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from conftest import make_day
+    path = tmp_path / "f.xlsx"
+    excel_store.append_rows(path, make_day(date(2026, 10, 2)))
+    excel_store.append_rows(path, make_day(date(2026, 10, 1)))  # older day -> sheet is rewritten
+    ws = load_workbook(path)[excel_store.SHEET_NAME]
+    formats = {ws.cell(row=r, column=1).number_format for r in range(2, ws.max_row + 1)}
+    assert formats == {excel_store.TIMESTAMP_FORMAT} and ws.max_row == 1 + 96

@@ -7,7 +7,7 @@ import excel_store
 import sync
 from conftest import make_day, make_days
 from tnb_data import ServerError
-from tnb_portal import SessionExpired
+from tnb_portal import SessionExpired, TnbThrottled
 
 CA = "220000000001"
 
@@ -107,7 +107,7 @@ def test_up_to_date_does_not_open_browser(settings, tmp_path):
     path = excel_store.account_file(tmp_path, CA)
     excel_store.append_rows(path, make_day(date(2026, 10, 28)))
     portal = FakePortal([])
-    result, _ = run(settings, portal)
+    result, _ = run({**settings, "bootstrap_start": "2026-10-28"}, portal)
     assert portal.logins == 0 and result.rows_added == 0
 
 
@@ -150,11 +150,11 @@ class FlakyPortal(FakePortal):
         return super().fetch_rows(sdpudcid, start, end)
 
 
-def test_dead_session_gives_clear_error_and_keeps_fetched_rows(settings, tmp_path):
-    # 1 Sep..28 Oct = two windows; the first arrives, then the session never comes back.
+def test_dead_session_is_reported_as_throttled_and_keeps_fetched_rows(settings, tmp_path):
+    # Recent 30 days arrive, then the session never comes back for the history window.
     portal = FlakyPortal(make_days(date(2026, 9, 1), date(2026, 10, 29)), fails=lambda n: n > 1)
-    with pytest.raises(SessionExpired, match="keeps logging out"):
-        run(settings, portal)
+    result, _ = run(settings, portal)
+    assert result.throttled and result.more and "keeps logging out" in result.stopped
     saved = excel_store.read_frame(excel_store.account_file(tmp_path, CA))
     assert len(saved) == 30 * 48
     assert portal.recovered == 1 and portal.opened == 2
@@ -163,8 +163,8 @@ def test_dead_session_gives_clear_error_and_keeps_fetched_rows(settings, tmp_pat
 def test_sync_never_logs_in_again_more_than_once(settings, tmp_path):
     # Every first and second try fails, so each window would need a full re-login.
     portal = FlakyPortal(make_days(date(2026, 5, 1), date(2026, 10, 29)), fails=lambda n: n % 3 != 0)
-    with pytest.raises(SessionExpired, match="keeps logging out"):
-        run({**settings, "bootstrap_start": "2026-05-01"}, portal)
+    result, _ = run({**settings, "bootstrap_start": "2026-05-01"}, portal)
+    assert result.throttled
     assert portal.opened == 1 + sync.MAX_RELOGINS
     assert portal.logins == 1 + sync.MAX_RELOGINS
 
@@ -172,8 +172,8 @@ def test_sync_never_logs_in_again_more_than_once(settings, tmp_path):
 def test_flapping_session_stops_after_recovery_limit(settings, tmp_path):
     # Every window's first try fails: each costs one recovery until the limit is used up.
     portal = FlakyPortal(make_days(date(2026, 5, 1), date(2026, 10, 29)), fails=lambda n: n % 2 == 1)
-    with pytest.raises(SessionExpired, match="keeps logging out"):
-        run({**settings, "bootstrap_start": "2026-05-01"}, portal)
+    result, _ = run({**settings, "bootstrap_start": "2026-05-01"}, portal)
+    assert result.throttled
     saved = excel_store.read_frame(excel_store.account_file(tmp_path, CA))
     assert portal.recovered == sync.MAX_SESSION_RECOVERIES
     assert len(saved) == sync.MAX_SESSION_RECOVERIES * 30 * 48
@@ -222,3 +222,125 @@ def test_refresh_accounts_selects_first_account_when_none_selected(settings):
     _, new_settings, _ = sync.refresh_accounts({**settings, "selected_account": ""}, "pw",
                                                portal_factory=FakePortal([]))
     assert new_settings["selected_account"] == "210000000002"
+
+
+def test_first_sync_without_chosen_date_goes_two_months_back(settings, tmp_path):
+    forward, backward = sync.plan_windows(tmp_path / "none.xlsx", {**settings, "bootstrap_start": ""},
+                                          CA, date(2026, 10, 30))
+    assert forward == [(date(2026, 10, 1), date(2026, 10, 31))]      # last 30 days first
+    assert backward == [(date(2026, 9, 1), date(2026, 10, 1)),       # then back to 2 months,
+                        (date(2026, 8, 31), date(2026, 9, 1))]        # newest first
+
+
+# -- Batched history download -------------------------------------------------------------------
+
+def test_years_of_history_are_split_into_batches_newest_first(settings, tmp_path):
+    portal = FakePortal(make_days(date(2024, 1, 1), date(2026, 10, 29)))
+    result, _ = run({**settings, "bootstrap_start": "2024-01-01"}, portal)
+    assert result.more                                                   # more batches needed
+    asked = sum((e - s).days for s, e in portal.windows)
+    assert asked <= sync.BATCH_DAYS and len(portal.windows) <= sync.BATCH_DAYS // 30
+    assert portal.windows[0] == (date(2026, 9, 29), date(2026, 10, 29))  # newest first
+    starts = [s for s, _ in portal.windows]
+    assert starts == sorted(starts, reverse=True)                        # then walking back
+    assert excel_store.find_gaps(excel_store.read_frame(excel_store.account_file(tmp_path, CA))) == []
+
+
+class StopAfter:
+    def __init__(self):
+        self.stop, self.slept = False, 0
+
+    def sleep(self, seconds):
+        self.slept += seconds
+
+
+@pytest.fixture(autouse=False)
+def small_batches(monkeypatch):
+    """60-day batches keep the multi-batch tests fast (each batch rewrites the Excel file)."""
+    monkeypatch.setattr(sync, "BATCH_DAYS", 60)
+
+
+def run_all(settings, portal, **kw):
+    saved = []
+    result, new = sync.download_all(settings, CA, "pw", portal_factory=portal, today=date(2026, 10, 28),
+                                    save=saved.append, **kw)
+    return result, new, saved
+
+
+def test_download_all_fetches_years_in_batches_with_pauses_and_one_browser(settings, tmp_path, small_batches):
+    store = make_days(date(2026, 5, 1), date(2026, 10, 29))
+    portal = CountingPortal(store)
+    clock = StopAfter()
+    result, new, saved = run_all({**settings, "bootstrap_start": "2026-05-01"}, portal, sleep=clock.sleep)
+    days = (date(2026, 10, 29) - date(2026, 5, 1)).days
+    batches = -(-days // sync.BATCH_DAYS)
+    assert not result.more and not result.stopped
+    assert result.first == "2026-05-01 00:00" and result.rows_added == len(store)
+    assert len(saved) == batches                                         # settings saved per batch
+    assert clock.slept == (batches - 1) * sync.BATCH_PAUSE_S
+    assert portal.entered == 1 and portal.exited == 1                    # one browser for the run
+
+
+def test_download_all_waits_and_continues_when_tnb_limits(settings, tmp_path, small_batches):
+    store = make_days(date(2026, 7, 1), date(2026, 10, 29))
+    portal = CountingPortal(store, throttle_on_call=3)          # 3rd request: TNB says "slow down"
+    clock = StopAfter()
+    result, _, _ = run_all({**settings, "bootstrap_start": "2026-07-01"}, portal, sleep=clock.sleep)
+    assert result.first == "2026-07-01 00:00" and not result.more
+    batches = -(-(date(2026, 10, 29) - date(2026, 7, 1)).days // sync.BATCH_DAYS)
+    assert clock.slept == sync.THROTTLE_PAUSE_S + (batches - 1) * sync.BATCH_PAUSE_S
+
+
+def test_download_all_gives_up_after_repeated_limits(settings, tmp_path, small_batches):
+    portal = CountingPortal(make_days(date(2026, 6, 1), date(2026, 10, 29)), throttle_on_call=lambda n: n > 1)
+    clock = StopAfter()
+    result, _, _ = run_all({**settings, "bootstrap_start": "2026-06-01"}, portal, sleep=clock.sleep)
+    assert "keeps limiting" in result.stopped
+    assert clock.slept == sync.MAX_THROTTLE_PAUSES * sync.THROTTLE_PAUSE_S
+
+
+def test_stop_during_pause_ends_run_and_keeps_data(settings, tmp_path, small_batches):
+    portal = CountingPortal(make_days(date(2026, 5, 1), date(2026, 10, 29)))
+    clock = StopAfter()
+
+    def sleep(seconds):
+        clock.sleep(seconds)
+        clock.stop = clock.slept >= 60
+
+    result, _, saved = run_all({**settings, "bootstrap_start": "2026-05-01"}, portal,
+                               sleep=sleep, should_stop=lambda: clock.stop)
+    assert result.stopped == "Stopped by you." and len(saved) == 1
+    assert len(excel_store.read_frame(excel_store.account_file(tmp_path, CA))) > 0
+
+
+def test_history_stops_at_meters_first_reading_and_remembers_it(settings, tmp_path, small_batches):
+    portal = CountingPortal(make_days(date(2026, 8, 15), date(2026, 10, 29)))
+    result, new, _ = run_all({**settings, "bootstrap_start": "2026-01-01"}, portal, sleep=StopAfter().sleep)
+    assert result.first == "2026-08-15 00:00" and not result.more
+    assert new["accounts"][CA]["history_floor"] == "2026-08-15"
+    again = CountingPortal([])
+    run(new, again)
+    assert again.windows == [] and again.logins == 0       # nothing left to ask TNB for
+
+
+class CountingPortal(FakePortal):
+    """Counts browser opens; raises TnbThrottled on chosen fetch calls (int = once, callable = rule)."""
+
+    def __init__(self, store, throttle_on_call=None):
+        super().__init__(store)
+        self.entered = self.exited = self.calls = 0
+        rule = throttle_on_call
+        self.throttle = rule if callable(rule) else (lambda n: n == rule)
+
+    def __enter__(self):
+        self.entered += 1
+        return self
+
+    def __exit__(self, *exc):
+        self.exited += 1
+
+    def fetch_rows(self, sdpudcid, start, end):
+        self.calls += 1
+        if self.throttle(self.calls):
+            raise TnbThrottled("TNB may be limiting")
+        return super().fetch_rows(sdpudcid, start, end)
