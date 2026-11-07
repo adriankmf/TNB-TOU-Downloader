@@ -132,6 +132,7 @@ async function loadDashboard() {
   $("kTotal").textContent = `${fmt(k.total_kwh)} kWh`;
   $("kDays").textContent = `${k.days} day${k.days === 1 ? "" : "s"}`;
   $("kAvg").textContent = `${fmt(k.avg_daily_kwh, 1)} kWh`;
+  $("kMin").textContent = k.min_day ? `Lowest: ${fmt(k.min_day_kwh, 1)} kWh on ${k.min_day}` : "";
   $("kMax").textContent = k.max_day ? `Highest: ${fmt(k.max_day_kwh, 1)} kWh on ${k.max_day}` : "";
   $("kPeak").textContent = `${k.peak_pct}%`;
   $("kPeakKwh").textContent = `${fmt(k.peak_kwh)} kWh in peak hours`;
