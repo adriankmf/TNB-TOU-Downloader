@@ -88,6 +88,8 @@ def summarise(df: pd.DataFrame, range_key: str = "30") -> dict:
             "peak_pct": round(100 * peak_total / total, 1) if total else 0,
             "peak_kwh": round(peak_total, 2),
             "offpeak_kwh": round(total - peak_total, 2),
+            "min_day": str(daily_totals.idxmin()) if len(daily_totals) else None,
+            "min_day_kwh": round(float(daily_totals.min()), 2) if len(daily_totals) else 0,
             "max_day": str(daily_totals.idxmax()) if len(daily_totals) else None,
             "max_day_kwh": round(float(daily_totals.max()), 2) if len(daily_totals) else 0,
             "days": int(len(daily_totals)),
